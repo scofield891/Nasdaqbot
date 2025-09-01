@@ -15,6 +15,7 @@ import random  # Sentiment simülasyonu için, gerçekte x_semantic_search kulla
 # Sabit Değerler
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7692932890:AAGrN_ebS9anjxOqSI9QlVDRQ7WCrIkvUqI")
 CHAT_ID = os.getenv("CHAT_ID", "-1003006970573")  # Senin chat ID'n
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")  # Opsiyonel, key alırsan koy
 TEST_MODE = False
 MARKET_CAP_MIN = 2000000000  # 2B USD
 MARKET_CAP_MAX = 10000000000  # 10B USD
@@ -47,23 +48,28 @@ logger.addHandler(file_handler)
 # Telegram Bot
 telegram_bot = telegram.Bot(token=BOT_TOKEN)
 
-# Hisse Listesi Çekme (Nasdaq ve S&P 500)
+# Hisse Listesi Çekme (Finnhub opsiyonel, fallback stockanalysis.com)
 def get_stock_list():
-    url_nasdaq = "https://stockanalysis.com/list/nasdaq-stocks/"
-    response = requests.get(url_nasdaq)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    nasdaq_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
-    nasdaq_symbols = nasdaq_df['Symbol'].tolist()
+    if FINNHUB_API_KEY:
+        finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
+        us_stocks = finnhub_client.stock_symbols('US')
+        all_symbols = [stock['symbol'] for stock in us_stocks if stock['type'] == 'Common Stock']
+    else:
+        url_nasdaq = "https://stockanalysis.com/list/nasdaq-stocks/"
+        response = requests.get(url_nasdaq)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table')
+        nasdaq_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
+        nasdaq_symbols = nasdaq_df['Symbol'].tolist()
 
-    url_sp = "https://stockanalysis.com/list/sp-500-stocks/"
-    response = requests.get(url_sp)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    sp_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
-    sp_symbols = sp_df['Symbol'].tolist()
+        url_sp = "https://stockanalysis.com/list/sp-500-stocks/"
+        response = requests.get(url_sp)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table')
+        sp_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
+        sp_symbols = sp_df['Symbol'].tolist()
 
-    all_symbols = list(set(nasdaq_symbols + sp_symbols))
+        all_symbols = list(set(nasdaq_symbols + sp_symbols))
     return all_symbols
 
 # Temel Verileri Çekme ve Filtreleme
@@ -207,8 +213,9 @@ async def main():
             message += "\nDeğişimler:\n" + "\n".join(changes)
         
         # Mesajı parçalara böl (Telegram limit 4096)
-        for part in range(0, len(message), MAX_MESSAGE_LEN):
-            await telegram_bot.send_message(chat_id=CHAT_ID, text=message[part:part + MAX_MESSAGE_LEN])
+        parts = [message[j:j+MAX_MESSAGE_LEN] for j in range(0, len(message), MAX_MESSAGE_LEN)]
+        for part in parts:
+            await telegram_bot.send_message(chat_id=CHAT_ID, text=part)
     logger.info("Mesaj gönderildi.")
 if __name__ == "__main__":
     asyncio.run(main())
