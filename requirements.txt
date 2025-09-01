@@ -2,6 +2,6 @@ yfinance
 pandas
 python-telegram-bot
 requests
-
-beautifulsoup4  # scrape için
+beautifulsoup4
 lxml
+finnhub-python
