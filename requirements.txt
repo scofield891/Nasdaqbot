@@ -2,4 +2,6 @@ yfinance
 pandas
 python-telegram-bot
 requests
+
 beautifulsoup4  # scrape için
+lxml
