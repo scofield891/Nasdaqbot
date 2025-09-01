@@ -11,23 +11,23 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import random  # Sentiment simülasyonu için, gerçekte x_semantic_search kullan
+import time  # Rate limit için
 
 # Sabit Değerler
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7692932890:AAGrN_ebS9anjxOqSI9QlVDRQ7WCrIkvUqI")
 CHAT_ID = os.getenv("CHAT_ID", "-1003006970573")  # Senin chat ID'n
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")  # Opsiyonel, key alırsan koy
 TEST_MODE = False
 MARKET_CAP_MIN = 2000000000  # 2B USD
 MARKET_CAP_MAX = 10000000000  # 10B USD
 MARKET_CAP_SPLIT = 2000000000  # 2B (liste ayrımı için, <2B ve 2B-10B)
-EPS_GROWTH_MIN = 0.30
-REVENUE_GROWTH_MIN = 0.20
+EPS_GROWTH_MIN = 0.20  # Gevşetildi
+REVENUE_GROWTH_MIN = 0.15  # Gevşetildi
 PE_MIN = 10
 PE_MAX = 60
-DEBT_EQUITY_MAX = 1.0
+DEBT_EQUITY_MAX = 1.5  # Gevşetildi
 ROE_MIN = 0.15
 SURPRISE_MIN = 0.0
-SENTIMENT_MIN = 0.60
+SENTIMENT_MIN = 0.50  # Gevşetildi
 INST_OWN_MIN = 0.50
 SHORT_INTEREST_MIN = 0.10
 SECTOR_MOMENTUM_MIN = 0.10
@@ -48,35 +48,30 @@ logger.addHandler(file_handler)
 # Telegram Bot
 telegram_bot = telegram.Bot(token=BOT_TOKEN)
 
-# Hisse Listesi Çekme (Finnhub opsiyonel, fallback stockanalysis.com)
+# Hisse Listesi Çekme (stockanalysis.com)
 def get_stock_list():
-    if FINNHUB_API_KEY:
-        finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
-        us_stocks = finnhub_client.stock_symbols('US')
-        all_symbols = [stock['symbol'] for stock in us_stocks if stock['type'] == 'Common Stock']
-    else:
-        url_nasdaq = "https://stockanalysis.com/list/nasdaq-stocks/"
-        response = requests.get(url_nasdaq)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table')
-        nasdaq_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
-        nasdaq_symbols = nasdaq_df['Symbol'].tolist()
+    url_nasdaq = "https://stockanalysis.com/list/nasdaq-stocks/"
+    response = requests.get(url_nasdaq)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table')
+    nasdaq_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
+    nasdaq_symbols = nasdaq_df['Symbol'].tolist()
 
-        url_sp = "https://stockanalysis.com/list/sp-500-stocks/"
-        response = requests.get(url_sp)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table')
-        sp_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
-        sp_symbols = sp_df['Symbol'].tolist()
+    url_sp = "https://stockanalysis.com/list/sp-500-stocks/"
+    response = requests.get(url_sp)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table')
+    sp_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
+    sp_symbols = sp_df['Symbol'].tolist()
 
-        all_symbols = list(set(nasdaq_symbols + sp_symbols))
+    all_symbols = list(set(nasdaq_symbols + sp_symbols))
     return all_symbols
 
 # Temel Verileri Çekme ve Filtreleme
 def get_fundamentals(symbols):
     candidates = []
-    for i in range(0, len(symbols), 50):  # Batch tarama
-        batch = symbols[i:i+50]
+    for i in range(0, len(symbols), 20):  # Batch'i küçülttüm, rate limit için
+        batch = symbols[i:i+20]
         for symbol in batch:
             try:
                 ticker = yf.Ticker(symbol)
@@ -90,12 +85,12 @@ def get_fundamentals(symbols):
                 pe = info.get('forwardPE', float('nan'))
                 debt_equity = info.get('debtToEquity', float('nan'))
                 roe = info.get('returnOnEquity', 0)
-                roic = info.get('returnOnInvestedCapital', 0)
+                roic = info.get('returnOnInvestedCapital', 0) or 0
                 gross_margin = info.get('grossMargins', 0)
                 fcf = info.get('freeCashflow', 0)
                 cash_ratio = info.get('totalCash', 0) / info.get('totalDebt', 1) if info.get('totalDebt', 0) > 0 else float('inf')
                 inst_own = info.get('heldPercentInstitutions', 0)
-                short_interest = info.get('shortPercentOfFloat', 0)
+                short_interest = info.get('shortPercentOfFloat', 0) or 0
                 volume = info.get('volume', 0)
                 avg_volume = info.get('averageVolume', 0)
                 surprise = 0
@@ -138,7 +133,7 @@ def get_fundamentals(symbols):
                 if sentiment > 0.70: bonus_score += 5
 
                 total_score = base_score + bonus_score
-                if base_score > 50 and total_score > 70: # Eşik
+                if base_score > 50 and total_score > 60: # Eşik, test için 60
                     candidates.append({
                         'symbol': symbol, 'cap': market_cap, 'base_score': base_score,
                         'bonus_score': bonus_score, 'total_score': total_score,
@@ -151,6 +146,7 @@ def get_fundamentals(symbols):
                     })
             except Exception as e:
                 logger.error(f"{symbol} hata: {e}")
+            time.sleep(0.5)  # Rate limit için, her sorgu sonrası bekle
     return pd.DataFrame(candidates)
 # Sentiment Çekme (Simüle, gerçekte x_semantic_search)
 def get_sentiment(symbol):
