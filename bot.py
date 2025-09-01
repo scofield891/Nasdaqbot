@@ -113,7 +113,7 @@ def get_fundamentals(symbols):
                 if debt_equity < DEBT_EQUITY_MAX: base_score += 10
                 if roe > ROE_MIN: base_score += 10
                 if surprise > SURPRISE_MIN: base_score += 5
-                if sentiment >SENTIMENT_MIN: base_score += 5
+                if sentiment > SENTIMENT_MIN: base_score += 5
 
                 # Bonus Filtre (30/30)
                 bonus_score = 0
