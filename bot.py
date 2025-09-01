@@ -26,6 +26,9 @@ DEBT_EQUITY_MAX = 1.0
 ROE_MIN = 0.15
 SURPRISE_MIN = 0.0
 SENTIMENT_MIN = 0.60
+INST_OWN_MIN = 0.50
+SHORT_INTEREST_MIN = 0.10
+SECTOR_MOMENTUM_MIN = 0.10
 PREVIOUS_DATA_FILE = 'previous_data.json'  # Değişim izleme için
 
 # Logging
@@ -88,10 +91,13 @@ def get_fundamentals(symbols):
                 volume = info.get('volume', 0)
                 avg_volume = info.get('averageVolume', 0)
                 surprise = 0
-                earnings_dates = ticker.earnings_dates
-                if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
-                    surprise = earnings_dates.iloc[0]['Surprise']
-                else:
+                try:
+                    earnings_dates = ticker.earnings_dates
+                    if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
+                        surprise = earnings_dates.iloc[0]['Surprise']
+                    else:
+                        logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
+                except:
                     logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
 
                 # Sentiment (Gerçekte x_semantic_search ile, burada simüle)
