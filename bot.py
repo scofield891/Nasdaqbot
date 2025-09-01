@@ -181,6 +181,33 @@ def detect_changes(current_df):
 def save_previous(current_df):
     with open(PREVIOUS_DATA_FILE, 'w') as f:
         json.dump(current_df.to_dict('records'), f)
+# Komut İşleyicisi
+async def handle_command(update, context):
+    if update.message and update.message.text:
+        command = update.message.text.split()
+        if len(command) >= 2 and command[0] == "/sebep":
+            symbol = command[1].upper()
+            df = pd.read_json(PREVIOUS_DATA_FILE) if os.path.exists(PREVIOUS_DATA_FILE) else pd.DataFrame()
+            if not df.empty:
+                row = df[df['symbol'] == symbol]
+                if not row.empty:
+                    row = row.iloc[0]
+                    message = (
+                        f"{symbol} için Sebepler:\n"
+                        f"EPS Büyüme: %{row['eps']*100:.0f}, Gelir Büyüme: %{row['revenue']*100:.0f}, "
+                        f"F/K: {row['pe']:.0f}, Borç/Özsermaye: {row['debt']:.1f}, "
+                        f"ROE: %{row['roe']*100:.0f}, ROIC: %{row['roic']*100:.0f}, "
+                        f"Brüt Marj: %{row['gross_margin']*100:.0f}, FCF: {row['fcf']:.0f}M, "
+                        f"Nakit Oranı: {row['cash_ratio']:.1f}, Kurumsal Sahiplik: %{row['inst_own']*100:.0f}, "
+                        f"Kısa Pozisyon: %{row['short_interest']*100:.0f}, Hacim: {row['volume']:.0f}, "
+                        f"Sürpriz: +{row['surprise']:.1f}%, Duyarlılık: %{row['sentiment']*100:.0f}, "
+                        f"Sektör Momentum: %{row['sector_momentum']*100:.0f}, Tahmin: {row['guidance']}."
+                    )
+                    await context.bot.send_message(chat_id=CHAT_ID, text=message)
+                else:
+                    await context.bot.send_message(chat_id=CHAT_ID, text=f"{symbol} için veri bulunamadı.")
+            else:
+                await context.bot.send_message(chat_id=CHAT_ID, text="Veri dosyası boş veya bulunamadı.")
 # Ana Fonksiyon (Cron ile Çalışacak)
 async def main():
     tz = pytz.timezone('Europe/Istanbul')
@@ -197,13 +224,11 @@ async def main():
        
         message = f"Pazartesi {now.strftime('%H:%M')} - Top 30 Baby Hisse (1-2 Yıl Patlama)\n\n<2B Hisseler:\n"
         for i, row in df_less_2b.iterrows():
-            message += f"{i+1}. {row['symbol']} (Cap: {row['cap']/1e9:.1f}B, Puan: {row['total_score']}/100, Base: {row['base_score']}, Bonus: {row['bonus_score']})\n"
-            message += f"   Sebepler: EPS %{row['eps']*100:.0f}, revenue %{row['revenue']*100:.0f}, P/E {row['pe']:.0f}, debt/equity {row['debt']:.1f}, ROE %{row['roe']*100:.0f}, ROIC %{row['roic']*100:.0f}, gross margin %{row['gross_margin']*100:.0f}, FCF {row['fcf']:.0f}M, cash ratio {row['cash_ratio']:.1f}, inst own {row['inst_own']*100:.0f}%, short {row['short_interest']*100:.0f}%, volume {row['volume']:.0f}, surprise +{row['surprise']:.1f}%, sentiment {row['sentiment']*100:.0f}%, sector momentum {row['sector_momentum']*100:.0f}%, guidance {row['guidance']}.\n"
+            message += f"{i+1}. {row['symbol']} (Piyasa Değeri: {row['cap']/1e9:.1f}B$, Puan: {row['total_score']}/100, Base: {row['base_score']}, Bonus: {row['bonus_score']})\n"
        
         message += "\n2B-10B Hisseler:\n"
         for i, row in df_2b_10b.iterrows():
-            message += f"{i+1}. {row['symbol']} (Cap: {row['cap']/1e9:.1f}B, Puan: {row['total_score']}/100, Base: {row['base_score']}, Bonus: {row['bonus_score']})\n"
-            message += f"   Sebepler: EPS %{row['eps']*100:.0f}, revenue %{row['revenue']*100:.0f}, P/E {row['pe']:.0f}, debt/equity {row['debt']:.1f}, ROE %{row['roe']*100:.0f}, ROIC %{row['roic']*100:.0f}, gross margin %{row['gross_margin']*100:.0f}, FCF {row['fcf']:.0f}M, cash ratio {row['cash_ratio']:.1f}, inst own {row['inst_own']*100:.0f}%, short {row['short_interest']*100:.0f}%, volume {row['volume']:.0f}, surprise +{row['surprise']:.1f}%, sentiment {row['sentiment']*100:.0f}%, sector momentum {row['sector_momentum']*100:.0f}%, guidance {row['guidance']}.\n"
+            message += f"{i+1}. {row['symbol']} (Piyasa Değeri: {row['cap']/1e9:.1f}B$, Puan: {row['total_score']}/100, Base: {row['base_score']}, Bonus: {row['bonus_score']})\n"
        
         if changes:
             message += "\nDeğişimler:\n" + "\n".join(changes)
@@ -213,5 +238,14 @@ async def main():
         for part in parts:
             await telegram_bot.send_message(chat_id=CHAT_ID, text=part)
     logger.info("Mesaj gönderildi.")
+# Bot Başlat (Komutlar için)
+def start_bot():
+    updater = telegram.ext.Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+    dp.add_handler(telegram.ext.CommandHandler("sebep", handle_command))
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == "__main__":
     asyncio.run(main())
+    start_bot()
