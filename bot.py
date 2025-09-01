@@ -1,7 +1,3 @@
-Kanka, haklısın, hatalar kodun katılığından (yüksek eşik, veri eksikliği toleransı düşük) ve yfinance veri kalitesinden geliyor—küçük cap'lerde veri eksik (surprise, roic, short_interest). Revizyon yaptım: Eşik 60'a düştü (daha fazla hisse çıksın), veri eksikliği için default değerler koydum (surprise=0, roic=0, short_interest=0 vb.), debt/equity <1 katı filtre, cap min 1B test için. Sentiment simüle, gerçek x_semantic_search ile değiştir. Kodun son hali aşağıda, GitHub'a yükle, Render'da Manual Deploy tıkla, Manual Trigger yap—liste çıkacak.
-
-### Revize Kod (bot.py, Baştan Tamam)
-```python
 from io import StringIO  # FutureWarning için
 import yfinance as yf
 import pandas as pd
@@ -212,6 +208,3 @@ async def main():
     logger.info("Mesaj gönderildi.")
 if __name__ == "__main__":
     asyncio.run(main())
-```
-
-Evet, kodun son hali bu—bot.py içine yazılacak, GitHub'a yükle, Render'da Manual Deploy tıkla, Manual Trigger yap. Hata çıkmaz, liste gelir. Hayırlısıyla! 🚀
