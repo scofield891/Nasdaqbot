@@ -16,7 +16,7 @@ import random  # Sentiment simülasyonu için, gerçekte x_semantic_search kulla
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7692932890:AAGrN_ebS9anjxOqSI9QlVDRQ7WCrIkvUqI")
 CHAT_ID = os.getenv("CHAT_ID", "-1003006970573")  # Senin chat ID'n
 TEST_MODE = False
-MARKET_CAP_MIN = 1000000000  # 1B USD (test için, normal 2B)
+MARKET_CAP_MIN = 2000000000  # 2B USD
 MARKET_CAP_MAX = 10000000000  # 10B USD
 MARKET_CAP_SPLIT = 2000000000  # 2B (liste ayrımı için, <2B ve 2B-10B)
 EPS_GROWTH_MIN = 0.30
@@ -31,6 +31,7 @@ INST_OWN_MIN = 0.50
 SHORT_INTEREST_MIN = 0.10
 SECTOR_MOMENTUM_MIN = 0.10
 PREVIOUS_DATA_FILE = 'previous_data.json'  # Değişim izleme için
+MAX_MESSAGE_LEN = 4000  # Telegram limit için
 
 # Logging
 logger = logging.getLogger()
@@ -83,12 +84,12 @@ def get_fundamentals(symbols):
                 pe = info.get('forwardPE', float('nan'))
                 debt_equity = info.get('debtToEquity', float('nan'))
                 roe = info.get('returnOnEquity', 0)
-                roic = info.get('returnOnInvestedCapital', 0) or 0
+                roic = info.get('returnOnInvestedCapital', 0)
                 gross_margin = info.get('grossMargins', 0)
                 fcf = info.get('freeCashflow', 0)
                 cash_ratio = info.get('totalCash', 0) / info.get('totalDebt', 1) if info.get('totalDebt', 0) > 0 else float('inf')
                 inst_own = info.get('heldPercentInstitutions', 0)
-                short_interest = info.get('shortPercentOfFloat', 0) or 0
+                short_interest = info.get('shortPercentOfFloat', 0)
                 volume = info.get('volume', 0)
                 avg_volume = info.get('averageVolume', 0)
                 surprise = 0
@@ -131,7 +132,7 @@ def get_fundamentals(symbols):
                 if sentiment > 0.70: bonus_score += 5
 
                 total_score = base_score + bonus_score
-                if base_score > 50 and total_score > 60: # Eşik, test için 60
+                if base_score > 50 and total_score > 70: # Eşik
                     candidates.append({
                         'symbol': symbol, 'cap': market_cap, 'base_score': base_score,
                         'bonus_score': bonus_score, 'total_score': total_score,
@@ -204,7 +205,10 @@ async def main():
        
         if changes:
             message += "\nDeğişimler:\n" + "\n".join(changes)
-    await telegram_bot.send_message(chat_id=CHAT_ID, text=message)
+        
+        # Mesajı parçalara böl (Telegram limit 4096)
+        for part in range(0, len(message), MAX_MESSAGE_LEN):
+            await telegram_bot.send_message(chat_id=CHAT_ID, text=message[part:part + MAX_MESSAGE_LEN])
     logger.info("Mesaj gönderildi.")
 if __name__ == "__main__":
     asyncio.run(main())
