@@ -27,6 +27,7 @@ ROE_MIN = 0.15
 SURPRISE_MIN = 0.0
 SENTIMENT_MIN = 0.60
 PREVIOUS_DATA_FILE = 'previous_data.json'  # Değişim izleme için
+SCORE_MIN = 60  # Test için 60, normalde 70
 
 # Logging
 logger = logging.getLogger()
@@ -67,8 +68,8 @@ def get_stock_list():
 # Temel Verileri Çekme ve Filtreleme
 def get_fundamentals(symbols):
     candidates = []
-    for i in range(0, len(symbols), 100):  # Batch tarama
-        batch = symbols[i:i+100]
+    for i in range(0, len(symbols), 50):  # Batch'i 50'ye düşürdüm, rate limit için
+        batch = symbols[i:i+50]
         for symbol in batch:
             try:
                 ticker = yf.Ticker(symbol)
@@ -82,7 +83,14 @@ def get_fundamentals(symbols):
                 pe = info.get('forwardPE', float('nan'))
                 debt_equity = info.get('debtToEquity', float('nan'))
                 roe = info.get('returnOnEquity', 0)
-                surprise = ticker.earnings_dates.iloc[0]['Surprise'] if not ticker.earnings_dates.empty else 0
+
+                # Surprise'ı optional yap
+                earnings_dates = ticker.earnings_dates
+                surprise = 0
+                if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
+                    surprise = earnings_dates.iloc[0]['Surprise']
+                else:
+                    logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
 
                 # Sentiment (Gerçekte x_semantic_search tool'u kullan, burada simüle)
                 sentiment = get_sentiment(symbol)
@@ -96,7 +104,7 @@ def get_fundamentals(symbols):
                 if surprise > SURPRISE_MIN: score += 5
                 if sentiment > SENTIMENT_MIN: score += 5
 
-                if score > 70:
+                if score > SCORE_MIN:
                     candidates.append({
                         'symbol': symbol,
                         'cap': market_cap,
