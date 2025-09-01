@@ -15,7 +15,7 @@ import random  # Sentiment simülasyonu için, gerçekte x_semantic_search kulla
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7692932890:AAGrN_ebS9anjxOqSI9QlVDRQ7WCrIkvUqI")
 CHAT_ID = os.getenv("CHAT_ID", "-1003006970573")  # Senin chat ID'n
 TEST_MODE = False
-MARKET_CAP_MIN = 2000000000  # 2B USD
+MARKET_CAP_MIN = 1000000000  # 1B USD (test için, normal 2B)
 MARKET_CAP_MAX = 10000000000  # 10B USD
 MARKET_CAP_SPLIT = 2000000000  # 2B (liste ayrımı için, <2B ve 2B-10B)
 EPS_GROWTH_MIN = 0.30
@@ -26,9 +26,6 @@ DEBT_EQUITY_MAX = 1.0
 ROE_MIN = 0.15
 SURPRISE_MIN = 0.0
 SENTIMENT_MIN = 0.60
-INST_OWN_MIN = 0.50
-SHORT_INTEREST_MIN = 0.10
-SECTOR_MOMENTUM_MIN = 0.10
 PREVIOUS_DATA_FILE = 'previous_data.json'  # Değişim izleme için
 
 # Logging
@@ -95,8 +92,6 @@ def get_fundamentals(symbols):
                     earnings_dates = ticker.earnings_dates
                     if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
                         surprise = earnings_dates.iloc[0]['Surprise']
-                    else:
-                        logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
                 except:
                     logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
 
@@ -132,7 +127,7 @@ def get_fundamentals(symbols):
                 if sentiment > 0.70: bonus_score += 5
 
                 total_score = base_score + bonus_score
-                if base_score > 50 and total_score > 70: # Eşik
+                if base_score > 50 and total_score > 60: # Eşik, test için 60
                     candidates.append({
                         'symbol': symbol, 'cap': market_cap, 'base_score': base_score,
                         'bonus_score': bonus_score, 'total_score': total_score,
