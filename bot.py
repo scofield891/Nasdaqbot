@@ -12,22 +12,24 @@ from bs4 import BeautifulSoup
 import json
 import random  # Sentiment simülasyonu için, gerçekte x_semantic_search kullan
 import time  # Rate limit için
+import finnhub  # Finnhub için
 
 # Sabit Değerler
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7692932890:AAGrN_ebS9anjxOqSI9QlVDRQ7WCrIkvUqI")
 CHAT_ID = os.getenv("CHAT_ID", "-1003006970573")  # Senin chat ID'n
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")  # Key al, buraya koy
 TEST_MODE = False
 MARKET_CAP_MIN = 2000000000  # 2B USD
 MARKET_CAP_MAX = 10000000000  # 10B USD
 MARKET_CAP_SPLIT = 2000000000  # 2B (liste ayrımı için, <2B ve 2B-10B)
-EPS_GROWTH_MIN = 0.20  # Gevşetildi
-REVENUE_GROWTH_MIN = 0.15  # Gevşetildi
+EPS_GROWTH_MIN = 0.30
+REVENUE_GROWTH_MIN = 0.20
 PE_MIN = 10
 PE_MAX = 60
-DEBT_EQUITY_MAX = 1.5  # Gevşetildi
+DEBT_EQUITY_MAX = 1.0
 ROE_MIN = 0.15
 SURPRISE_MIN = 0.0
-SENTIMENT_MIN = 0.50  # Gevşetildi
+SENTIMENT_MIN = 0.60
 INST_OWN_MIN = 0.50
 SHORT_INTEREST_MIN = 0.10
 SECTOR_MOMENTUM_MIN = 0.10
@@ -48,65 +50,125 @@ logger.addHandler(file_handler)
 # Telegram Bot
 telegram_bot = telegram.Bot(token=BOT_TOKEN)
 
-# Hisse Listesi Çekme (stockanalysis.com)
+# Hisse Listesi Çekme (Finnhub ile US hisseleri, fallback stockanalysis.com)
 def get_stock_list():
-    url_nasdaq = "https://stockanalysis.com/list/nasdaq-stocks/"
-    response = requests.get(url_nasdaq)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    nasdaq_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
-    nasdaq_symbols = nasdaq_df['Symbol'].tolist()
+    if FINNHUB_API_KEY:
+        finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
+        us_stocks = finnhub_client.stock_symbols('US')
+        all_symbols = [stock['symbol'] for stock in us_stocks if stock['type'] == 'Common Stock']
+    else:
+        url_nasdaq = "https://stockanalysis.com/list/nasdaq-stocks/"
+        response = requests.get(url_nasdaq)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table')
+        nasdaq_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
+        nasdaq_symbols = nasdaq_df['Symbol'].tolist()
 
-    url_sp = "https://stockanalysis.com/list/sp-500-stocks/"
-    response = requests.get(url_sp)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table')
-    sp_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
-    sp_symbols = sp_df['Symbol'].tolist()
+        url_sp = "https://stockanalysis.com/list/sp-500-stocks/"
+        response = requests.get(url_sp)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table')
+        sp_df = pd.read_html(StringIO(str(table)))[0]  # FutureWarning düzeltme
+        sp_symbols = sp_df['Symbol'].tolist()
 
-    all_symbols = list(set(nasdaq_symbols + sp_symbols))
+        all_symbols = list(set(nasdaq_symbols + sp_symbols))
     return all_symbols
 
-# Temel Verileri Çekme ve Filtreleme
+# Temel Verileri Çekme ve Filtreleme (Finnhub ile, fallback yfinance)
 def get_fundamentals(symbols):
     candidates = []
+    finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY) if FINNHUB_API_KEY else None
     for i in range(0, len(symbols), 20):  # Batch'i küçülttüm, rate limit için
         batch = symbols[i:i+20]
         for symbol in batch:
             try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                market_cap = info.get('marketCap', 0)
-                if not (MARKET_CAP_MIN <= market_cap <= MARKET_CAP_MAX):
-                    continue
+                if finnhub_client:
+                    # Finnhub ile veri çek
+                    profile = finnhub_client.company_profile2(symbol=symbol)
+                    market_cap = profile.get('marketCapitalization', 0) * 1e6  # Milyon USD
+                    if not (MARKET_CAP_MIN <= market_cap <= MARKET_CAP_MAX):
+                        continue
 
-                eps_growth = info.get('earningsQuarterlyGrowth', 0)
-                revenue_growth = info.get('revenueGrowth', 0)
-                pe = info.get('forwardPE', float('nan'))
-                debt_equity = info.get('debtToEquity', float('nan'))
-                roe = info.get('returnOnEquity', 0)
-                roic = info.get('returnOnInvestedCapital', 0) or 0
-                gross_margin = info.get('grossMargins', 0)
-                fcf = info.get('freeCashflow', 0)
-                cash_ratio = info.get('totalCash', 0) / info.get('totalDebt', 1) if info.get('totalDebt', 0) > 0 else float('inf')
-                inst_own = info.get('heldPercentInstitutions', 0)
-                short_interest = info.get('shortPercentOfFloat', 0) or 0
-                volume = info.get('volume', 0)
-                avg_volume = info.get('averageVolume', 0)
-                surprise = 0
-                try:
-                    earnings_dates = ticker.earnings_dates
-                    if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
-                        surprise = earnings_dates.iloc[0]['Surprise']
-                except:
-                    logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
+                    financials = finnhub_client.financials_reported(symbol=symbol, freq="quarterly")
+                    if financials.get("data"):
+                        reports = financials["data"]
+                        latest = reports[0]["report"]["ic"]  # income statement
+                        eps = latest.get("EPS", 0)
+                        revenue = latest.get("Revenue", 0)
+                    else:
+                        eps = 0
+                        revenue = 0
 
-                # Sentiment (Gerçekte x_semantic_search ile, burada simüle)
-                sentiment = get_sentiment(symbol)
-                # Guidance (Simüle, gerçekte yfinance veya Finnhub ile)
-                guidance = get_guidance(symbol)
-                # Sector momentum (Simüle, gerçekte yfinance ile sektör endeksi)
-                sector_momentum = get_sector_momentum(symbol)
+                    insider = finnhub_client.stock_insider_transactions(symbol=symbol)
+                    insider_trades = len(insider.get("data", []))
+
+                    sentiment_data = finnhub_client.stock_social_sentiment(symbol=symbol, from_="2023-01-01", to="2025-01-01")
+                    reddit_mentions = len(sentiment_data.get("reddit", []))
+                    twitter_mentions = len(sentiment_data.get("twitter", []))
+                    sentiment = (reddit_mentions + twitter_mentions) / 200 if (reddit_mentions + twitter_mentions) > 0 else 0.5  # Basit skor
+
+                    quote = finnhub_client.quote(symbol)
+                    price = quote.get("c", 0)
+                    high_52w = quote.get("h", 0)
+                    low_52w = quote.get("l", 0)
+
+                    # Diğer metrikler Finnhub'da yok, yfinance fallback
+                    ticker = yf.Ticker(symbol)
+                    info = ticker.info
+                    pe = info.get('forwardPE', float('nan'))
+                    debt_equity = info.get('debtToEquity', float('nan'))
+                    roe = info.get('returnOnEquity', 0)
+                    roic = info.get('returnOnInvestedCapital', 0) or 0
+                    gross_margin = info.get('grossMargins', 0)
+                    fcf = info.get('freeCashflow', 0)
+                    cash_ratio = info.get('totalCash', 0) / info.get('totalDebt', 1) if info.get('totalDebt', 0) > 0 else float('inf')
+                    inst_own = info.get('heldPercentInstitutions', 0)
+                    short_interest = info.get('shortPercentOfFloat', 0) or 0
+                    volume = info.get('volume', 0)
+                    avg_volume = info.get('averageVolume', 0)
+                    surprise = 0
+                    try:
+                        earnings_dates = ticker.earnings_dates
+                        if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
+                            surprise = earnings_dates.iloc[0]['Surprise']
+                    except:
+                        logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
+
+                    guidance = get_guidance(symbol)  # Simüle
+                    sector_momentum = get_sector_momentum(symbol)  # Simüle
+
+                else:
+                    # Fallback yfinance
+                    ticker = yf.Ticker(symbol)
+                    info = ticker.info
+                    market_cap = info.get('marketCap', 0)
+                    if not (MARKET_CAP_MIN <= market_cap <= MARKET_CAP_MAX):
+                        continue
+
+                    eps_growth = info.get('earningsQuarterlyGrowth', 0)
+                    revenue_growth = info.get('revenueGrowth', 0)
+                    pe = info.get('forwardPE', float('nan'))
+                    debt_equity = info.get('debtToEquity', float('nan'))
+                    roe = info.get('returnOnEquity', 0)
+                    roic = info.get('returnOnInvestedCapital', 0) or 0
+                    gross_margin = info.get('grossMargins', 0)
+                    fcf = info.get('freeCashflow', 0)
+                    cash_ratio = info.get('totalCash', 0) / info.get('totalDebt', 1) if info.get('totalDebt', 0) > 0 else float('inf')
+                    inst_own = info.get('heldPercentInstitutions', 0)
+                    short_interest = info.get('shortPercentOfFloat', 0) or 0
+                    volume = info.get('volume', 0)
+                    avg_volume = info.get('averageVolume', 0)
+                    surprise = 0
+                    try:
+                        earnings_dates = ticker.earnings_dates
+                        if not earnings_dates.empty and 'Surprise' in earnings_dates.columns:
+                            surprise = earnings_dates.iloc[0]['Surprise']
+                    except:
+                        logger.warning(f"{symbol} surprise verisi yok, 0 kabul edildi.")
+
+                    sentiment = get_sentiment(symbol)
+                    guidance = get_guidance(symbol)
+                    sector_momentum = get_sector_momentum(symbol)
 
                 # Ana Filtre (70/70)
                 base_score = 0
@@ -181,33 +243,6 @@ def detect_changes(current_df):
 def save_previous(current_df):
     with open(PREVIOUS_DATA_FILE, 'w') as f:
         json.dump(current_df.to_dict('records'), f)
-# Komut İşleyicisi
-async def handle_command(update, context):
-    if update.message and update.message.text:
-        command = update.message.text.split()
-        if len(command) >= 2 and command[0] == "/sebep":
-            symbol = command[1].upper()
-            df = pd.read_json(PREVIOUS_DATA_FILE) if os.path.exists(PREVIOUS_DATA_FILE) else pd.DataFrame()
-            if not df.empty:
-                row = df[df['symbol'] == symbol]
-                if not row.empty:
-                    row = row.iloc[0]
-                    message = (
-                        f"{symbol} için Sebepler:\n"
-                        f"EPS Büyüme: %{row['eps']*100:.0f}, Gelir Büyüme: %{row['revenue']*100:.0f}, "
-                        f"F/K: {row['pe']:.0f}, Borç/Özsermaye: {row['debt']:.1f}, "
-                        f"ROE: %{row['roe']*100:.0f}, ROIC: %{row['roic']*100:.0f}, "
-                        f"Brüt Marj: %{row['gross_margin']*100:.0f}, FCF: {row['fcf']:.0f}M, "
-                        f"Nakit Oranı: {row['cash_ratio']:.1f}, Kurumsal Sahiplik: %{row['inst_own']*100:.0f}, "
-                        f"Kısa Pozisyon: %{row['short_interest']*100:.0f}, Hacim: {row['volume']:.0f}, "
-                        f"Sürpriz: +{row['surprise']:.1f}%, Duyarlılık: %{row['sentiment']*100:.0f}, "
-                        f"Sektör Momentum: %{row['sector_momentum']*100:.0f}, Tahmin: {row['guidance']}."
-                    )
-                    await context.bot.send_message(chat_id=CHAT_ID, text=message)
-                else:
-                    await context.bot.send_message(chat_id=CHAT_ID, text=f"{symbol} için veri bulunamadı.")
-            else:
-                await context.bot.send_message(chat_id=CHAT_ID, text="Veri dosyası boş veya bulunamadı.")
 # Ana Fonksiyon (Cron ile Çalışacak)
 async def main():
     tz = pytz.timezone('Europe/Istanbul')
